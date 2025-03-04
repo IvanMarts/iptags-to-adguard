@@ -42,17 +42,26 @@ class AdGuardAPI:
     def add_rewrite(self, domain: str, answer: str) -> dict:
         """
         Añade una entrada de rewrite enviando un POST al endpoint /control/rewrite/add.
-        El payload es: {"domain": domain, "answer": answer}
+        Se asume que si la respuesta es vacía pero devuelve 200, la operación fue exitosa.
         """
         url = f"{self.base_url}/control/rewrite/add"
         payload = {"domain": domain, "answer": answer}
         try:
             response = self.session.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
-            return response.json()
+            if response.text.strip():
+                try:
+                    return response.json()
+                except ValueError:
+                    return {"status": response.status_code, "message": response.text.strip()}
+            else:
+                return {"status": response.status_code, "message": "Rewrite added successfully, no content returned."}
+        except requests.exceptions.HTTPError as http_err:
+            print(f"HTTP Error: {http_err} (Status Code: {response.status_code})")
+            print(f"Respuesta del servidor: {response.text}")
         except Exception as e:
-            print(f"Error añadiendo la entrada de rewrite: {e}")
-            sys.exit(1)
+            print(f"Error inesperado: {e}")
+        sys.exit(1)
 
 def load_config(filename: str) -> dict:
     """
@@ -71,7 +80,7 @@ def main():
     )
     parser.add_argument("--config", default="config.json", help="Ruta al fichero de configuración (default: config.json)")
     
-    subparsers = parser.add_subparsers(dest="command", required=True, help="Comando a ejecutar")
+    subparsers = parser.add_subparsers(dest="command", help="Comando a ejecutar")
     
     # Subcomando list: lista la configuración de rewrite
     subparsers.add_parser("list", help="Listar la configuración de rewrite (/control/rewrite/list)")
@@ -81,6 +90,11 @@ def main():
     parser_add.add_argument("--domain", required=True, help="Dominio para la regla de rewrite")
     parser_add.add_argument("--answer", required=True, help="Respuesta asociada al dominio")
     
+    # Si no se pasan parámetros, muestra la ayuda y sale.
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
+        
     args = parser.parse_args()
     
     config = load_config(args.config)
@@ -100,9 +114,30 @@ def main():
         print("Configuración de rewrite:")
         print(json.dumps(rewrite_config, indent=2))
     elif args.command == "add":
-        result = api.add_rewrite(args.domain, args.answer)
-        print("Respuesta de add rewrite:")
-        print(json.dumps(result, indent=2))
+        # Realizar una consulta previa para comprobar si ya existe la entrada.
+        current_rewrites = api.get_rewrite_list()
+        # Dependiendo del formato devuelto, se asume que current_rewrites es una lista,
+        # o si es un dict, se busca una clave "list" o similar.
+        if isinstance(current_rewrites, dict):
+            # Por ejemplo, si la respuesta es {"list": [ ... ]}, usamos esa clave.
+            current_rewrites = current_rewrites.get("list", current_rewrites.get("rewrite", []))
+        
+        exists = False
+        existing_entry = None
+        for entry in current_rewrites:
+            if entry.get("domain") == args.domain or entry.get("answer") == args.answer:
+                exists = True
+                existing_entry = entry
+                break
+        
+        if exists:
+            print("No se puede añadir la entrada. Ya existe la siguiente entrada:")
+            print(json.dumps(existing_entry, indent=2))
+            sys.exit(0)
+        else:
+            result = api.add_rewrite(args.domain, args.answer)
+            print("Respuesta de add rewrite:")
+            print(json.dumps(result, indent=2))
     else:
         parser.print_help()
 
