@@ -5,20 +5,18 @@ en AdGuard Home vía REST API.
 
 Se ejecuta en el host de Proxmox (donde están disponibles los comandos qm y pct).
 
-La configuración de AdGuard se carga desde un fichero JSON (por defecto config.json) con este formato:
+La configuración se carga desde un fichero JSON (por defecto config.json) con este formato:
 {
   "adguard_url": "http://192.168.1.1:83",
   "name": "your_username",
   "password": "your_password",
   "timeout": 10,
-  "allowed_cidrs": [
-    "192.168.0.0/16",
-    "100.64.0.0/10",
-    "10.0.0.0/8"
-  ],
-  "network_domain": "dominio"
+  "allowed_cidrs": [ "192.168.0.0/16", "100.64.0.0/10", "10.0.0.0/8" ],
+  "network_domain": "local",
+  "skip_patterns": [ "test", "temp" ]
 }
-Si network_domain es "dominio", un host llamado "vm01" se actualizará como "vm01.dominio".
+Si network_domain no se define, se usará "local". Además, si el hostname contiene alguna de las cadenas definidas
+en skip_patterns, ese host se omitirá.
 """
 
 import subprocess
@@ -29,7 +27,7 @@ import sys
 import argparse
 from typing import List, Dict, Any, Optional
 
-# Global variable para los CIDRs permitidos (se configurarán desde el fichero de configuración).
+# Global variable para los CIDRs permitidos, se configurará desde el fichero de configuración.
 ALLOWED_CIDRS: List[ipaddress.IPv4Network] = []
 
 # -----------------------------
@@ -48,13 +46,13 @@ class AdGuardAPI:
         self.password: str = password
         self.timeout: int = timeout
         self.session = requests.Session()
-        # Indica que se envía JSON
         self.session.headers.update({"Content-Type": "application/json"})
         self._set_auth_header()
         
     def _set_auth_header(self) -> None:
         """
         Configura la cabecera 'Authorization' utilizando Basic Auth.
+        # DEBUG: print("DEBUG: Configurando cabecera Authorization")
         """
         credentials: str = f"{self.name}:{self.password}"
         encoded_credentials: str = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
@@ -73,7 +71,6 @@ class AdGuardAPI:
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
             data: Any = response.json()
-            # La respuesta puede venir en la clave "list" o "rewrite"
             if isinstance(data, dict):
                 return data.get("list", data.get("rewrite", []))
             return data
@@ -106,7 +103,6 @@ class AdGuardAPI:
         """
         Actualiza una regla de rewrite mediante PUT a /control/rewrite/update.
         El payload enviado tiene la siguiente estructura:
-        
             {
               "target": { "domain": target_domain, "answer": target_ip },
               "update": { "domain": update_domain, "answer": update_ip }
@@ -218,6 +214,16 @@ def extract_valid_ip(tags: str) -> str:
     # # DEBUG: print("DEBUG: No se encontró ninguna IP válida en los tags.")
     return ""
 
+def should_skip(host: str, skip_patterns: List[str]) -> bool:
+    """
+    Devuelve True si el host contiene alguna de las cadenas en skip_patterns (sin distinguir mayúsculas/minúsculas).
+    """
+    host_lower = host.lower()
+    for pattern in skip_patterns:
+        if pattern.lower() in host_lower:
+            return True
+    return False
+
 # -----------------------------
 # Funciones para ejecutar comandos de Proxmox
 # -----------------------------
@@ -312,12 +318,15 @@ def main() -> None:
     ag_name: str = ag_config.get("name", "admin")
     ag_password: str = ag_config.get("password", "")
     timeout: int = ag_config.get("timeout", 10)
-    network_domain: str = ag_config.get("network_domain", "")
+    # Si no se define network_domain, se asigna "local" por defecto.
+    network_domain: str = ag_config.get("network_domain", "local")
+    # Se obtienen las cadenas que, si coinciden parcialmente en el hostname, hacen que se omita su procesamiento.
+    skip_patterns: List[str] = ag_config.get("skip_patterns", [])
     if not ag_password:
         print("Error: El fichero de configuración debe incluir 'password'.")
         sys.exit(1)
 
-    # Configurar ALLOWED_CIDRS desde el fichero de configuración.
+    # Configurar ALLOWED_CIDRS desde la configuración.
     cidr_list = ag_config.get("allowed_cidrs", ["192.168.0.0/16", "100.64.0.0/10", "10.0.0.0/8"])
     global ALLOWED_CIDRS
     try:
@@ -336,9 +345,13 @@ def main() -> None:
         config_lines: List[str] = get_vm_config(vmid)
         vmname: str = extract_value_from_config(config_lines, "name:")
         vmname = sanitize_hostname(vmname)
-        # Agregar el dominio de red si está definido y no está presente
+        # Agregar el dominio de red si no está presente.
         if network_domain and not vmname.endswith("." + network_domain):
             vmname = f"{vmname}.{network_domain}"
+        # Si el hostname coincide parcialmente con alguno de los skip_patterns, se omite.
+        if skip_patterns and should_skip(vmname, skip_patterns):
+            print(f"Se omite el host {vmname} por coincidir con patrón de exclusión.")
+            continue
         tags: str = extract_value_from_config(config_lines, "tags:")
         tag_ip: str = extract_valid_ip(tags)
         if vmname and tag_ip:
@@ -373,6 +386,9 @@ def main() -> None:
         hostname = sanitize_hostname(hostname)
         if network_domain and not hostname.endswith("." + network_domain):
             hostname = f"{hostname}.{network_domain}"
+        if skip_patterns and should_skip(hostname, skip_patterns):
+            print(f"Se omite el host {hostname} por coincidir con patrón de exclusión.")
+            continue
         tags: str = extract_value_from_config(config_lines, "tags:")
         tag_ip: str = extract_valid_ip(tags)
         if hostname and tag_ip:

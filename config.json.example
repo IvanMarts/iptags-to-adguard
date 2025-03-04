@@ -1,12 +1,16 @@
 {
-  "adguard_url": "http://192.168.1.1:3000",
-  "name": "user",
-  "password": "password",
+  "adguard_url": "http://192.168.1.1:83",
+  "name": "your_username",
+  "password": "your_password",
   "timeout": 10,
   "allowed_cidrs": [
     "192.168.0.0/16",
     "100.64.0.0/10",
     "10.0.0.0/8"
   ],
-  "network_domain": "dominio"
+  "network_domain": "local",
+  "skip_patterns": [
+    "test",
+    "temp"
+  ]
 }
