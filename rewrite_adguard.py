@@ -17,7 +17,7 @@ class AdGuardAPI:
         
     def _set_auth_header(self):
         """
-        Configura la cabecera Authorization con Basic Auth usando name:password.
+        Configura la cabecera Authorization usando Basic Auth con name:password.
         """
         credentials = f"{self.name}:{self.password}"
         encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
@@ -26,26 +26,30 @@ class AdGuardAPI:
             "Accept": "application/json"
         })
     
-    def get_rewrite_list(self) -> dict:
+    def get_rewrite_list(self) -> list:
         """
         Consulta el endpoint /control/rewrite/list para obtener la configuración de rewrite.
+        Se espera que la respuesta contenga una lista de reglas.
         """
         url = f"{self.base_url}/control/rewrite/list"
         try:
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            if isinstance(data, dict):
+                return data.get("list", data.get("rewrite", []))
+            return data
         except Exception as e:
             print(f"Error obteniendo la lista de rewrite: {e}")
             sys.exit(1)
             
-    def add_rewrite(self, domain: str, answer: str) -> dict:
+    def add_rewrite(self, domain: str, ip: str) -> dict:
         """
         Añade una entrada de rewrite enviando un POST al endpoint /control/rewrite/add.
         Se asume que si la respuesta es vacía pero devuelve 200, la operación fue exitosa.
         """
         url = f"{self.base_url}/control/rewrite/add"
-        payload = {"domain": domain, "answer": answer}
+        payload = {"domain": domain, "answer": ip}
         try:
             response = self.session.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
@@ -56,6 +60,91 @@ class AdGuardAPI:
                     return {"status": response.status_code, "message": response.text.strip()}
             else:
                 return {"status": response.status_code, "message": "Rewrite added successfully, no content returned."}
+        except requests.exceptions.HTTPError as http_err:
+            print(f"HTTP Error: {http_err} (Status Code: {response.status_code})")
+            print(f"Respuesta del servidor: {response.text}")
+        except Exception as e:
+            print(f"Error inesperado: {e}")
+        sys.exit(1)
+    
+    def delete_rewrite(self, domain: str = None, ip: str = None) -> dict:
+        """
+        Elimina una entrada de rewrite enviando un POST al endpoint /control/rewrite/delete.
+        Se busca primero en la lista una regla que coincida con el domain o ip indicado.
+        """
+        current_rewrites = self.get_rewrite_list()
+        found_entry = None
+        for entry in current_rewrites:
+            if domain and entry.get("domain") == domain:
+                found_entry = entry
+                break
+            if ip and entry.get("answer") == ip:
+                found_entry = entry
+                break
+        
+        if not found_entry:
+            print("No se encontró ninguna entrada que coincida con los criterios dados.")
+            sys.exit(0)
+        
+        url = f"{self.base_url}/control/rewrite/delete"
+        payload = {
+            "domain": found_entry.get("domain"),
+            "answer": found_entry.get("answer")
+        }
+        try:
+            response = self.session.post(url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            if response.text.strip():
+                try:
+                    return response.json()
+                except ValueError:
+                    return {"status": response.status_code, "message": response.text.strip()}
+            else:
+                return {"status": response.status_code, "message": "Rewrite deleted successfully, no content returned."}
+        except requests.exceptions.HTTPError as http_err:
+            print(f"HTTP Error: {http_err} (Status Code: {response.status_code})")
+            print(f"Respuesta del servidor: {response.text}")
+        except Exception as e:
+            print(f"Error inesperado: {e}")
+        sys.exit(1)
+    
+    def update_rewrite(self, target_domain: str, target_ip: str, update_domain: str, update_ip: str) -> dict:
+        """
+        Actualiza una regla de rewrite enviando un PUT al endpoint /control/rewrite/update.
+        El payload tiene la forma:
+        
+        {
+          "target": {
+            "domain": target_domain,
+            "answer": target_ip
+          },
+          "update": {
+            "domain": update_domain,
+            "answer": update_ip
+          }
+        }
+        """
+        url = f"{self.base_url}/control/rewrite/update"
+        payload = {
+            "target": {
+                "domain": target_domain,
+                "answer": target_ip
+            },
+            "update": {
+                "domain": update_domain,
+                "answer": update_ip
+            }
+        }
+        try:
+            response = self.session.put(url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            if response.text.strip():
+                try:
+                    return response.json()
+                except ValueError:
+                    return {"status": response.status_code, "message": response.text.strip()}
+            else:
+                return {"status": response.status_code, "message": "Rewrite updated successfully, no content returned."}
         except requests.exceptions.HTTPError as http_err:
             print(f"HTTP Error: {http_err} (Status Code: {response.status_code})")
             print(f"Respuesta del servidor: {response.text}")
@@ -88,7 +177,20 @@ def main():
     # Subcomando add: añade una entrada de rewrite
     parser_add = subparsers.add_parser("add", help="Añadir una entrada de rewrite (/control/rewrite/add)")
     parser_add.add_argument("--domain", required=True, help="Dominio para la regla de rewrite")
-    parser_add.add_argument("--answer", required=True, help="Respuesta asociada al dominio")
+    parser_add.add_argument("--ip", required=True, help="IP asociada al dominio")
+    
+    # Subcomando del: elimina una entrada de rewrite
+    parser_del = subparsers.add_parser("del", help="Eliminar una entrada de rewrite (/control/rewrite/delete)")
+    group = parser_del.add_mutually_exclusive_group(required=True)
+    group.add_argument("--domain", help="Dominio de la entrada a eliminar")
+    group.add_argument("--ip", help="IP de la entrada a eliminar")
+    
+    # Subcomando update: actualiza una entrada de rewrite
+    parser_update = subparsers.add_parser("update", help="Actualizar una entrada de rewrite (/control/rewrite/update)")
+    parser_update.add_argument("--target-domain", required=True, help="Dominio de la regla existente a actualizar")
+    parser_update.add_argument("--target-ip", required=True, help="IP de la regla existente a actualizar")
+    parser_update.add_argument("--update-domain", required=True, help="Nuevo dominio para la regla")
+    parser_update.add_argument("--update-ip", required=True, help="Nueva IP para la regla")
     
     # Si no se pasan parámetros, muestra la ayuda y sale.
     if len(sys.argv) == 1:
@@ -114,30 +216,41 @@ def main():
         print("Configuración de rewrite:")
         print(json.dumps(rewrite_config, indent=2))
     elif args.command == "add":
-        # Realizar una consulta previa para comprobar si ya existe la entrada.
+        # Se busca si ya existe una entrada con el mismo dominio.
         current_rewrites = api.get_rewrite_list()
-        # Dependiendo del formato devuelto, se asume que current_rewrites es una lista,
-        # o si es un dict, se busca una clave "list" o similar.
-        if isinstance(current_rewrites, dict):
-            # Por ejemplo, si la respuesta es {"list": [ ... ]}, usamos esa clave.
-            current_rewrites = current_rewrites.get("list", current_rewrites.get("rewrite", []))
-        
-        exists = False
-        existing_entry = None
+        found_entry = None
         for entry in current_rewrites:
-            if entry.get("domain") == args.domain or entry.get("answer") == args.answer:
-                exists = True
-                existing_entry = entry
+            if entry.get("domain") == args.domain:
+                found_entry = entry
                 break
         
-        if exists:
-            print("No se puede añadir la entrada. Ya existe la siguiente entrada:")
-            print(json.dumps(existing_entry, indent=2))
-            sys.exit(0)
+        if found_entry:
+            print("La entrada ya existe. Se procederá a actualizarla con los nuevos datos.")
+            result = api.update_rewrite(
+                target_domain=args.domain,
+                target_ip=found_entry.get("answer"),
+                update_domain=args.domain,
+                update_ip=args.ip
+            )
+            print("Respuesta de update rewrite:")
+            print(json.dumps(result, indent=2))
         else:
-            result = api.add_rewrite(args.domain, args.answer)
+            result = api.add_rewrite(args.domain, args.ip)
             print("Respuesta de add rewrite:")
             print(json.dumps(result, indent=2))
+    elif args.command == "del":
+        result = api.delete_rewrite(domain=args.domain, ip=args.ip)
+        print("Respuesta de delete rewrite:")
+        print(json.dumps(result, indent=2))
+    elif args.command == "update":
+        result = api.update_rewrite(
+            target_domain=args.target_domain,
+            target_ip=args.target_ip,
+            update_domain=args.update_domain,
+            update_ip=args.update_ip
+        )
+        print("Respuesta de update rewrite:")
+        print(json.dumps(result, indent=2))
     else:
         parser.print_help()
 
