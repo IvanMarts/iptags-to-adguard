@@ -157,6 +157,8 @@ def extract_valid_ip(tags: str) -> str:
     Extrae la primera IP válida de una cadena de tags.
     Busca tokens que comiencen con "ip=" y retorna la primera IP que cumpla la validación.
     """
+
+    print(f"{tags}")
     tokens = tags.split(";")
     for token in tokens:
         token = token.strip()
