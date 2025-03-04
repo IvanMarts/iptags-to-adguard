@@ -1,41 +1,62 @@
 #!/usr/bin/env python3
+"""
+Script para administrar reglas de rewrite en AdGuard Home vía REST API.
+
+Se utilizan los siguientes endpoints:
+  - GET /control/rewrite/list    : Listar reglas existentes.
+  - POST /control/rewrite/add    : Agregar una nueva regla.
+  - POST /control/rewrite/delete : Eliminar una regla.
+  - PUT /control/rewrite/update  : Actualizar una regla.
+
+La autenticación se realiza mediante Basic Authentication, utilizando
+las credenciales definidas en el fichero de configuración (config.json).
+"""
+
 import requests
 import base64
 import json
 import sys
 import argparse
+from typing import List, Dict, Optional, Any
 
 class AdGuardAPI:
-    def __init__(self, base_url: str, name: str, password: str, timeout: int = 10):
-        self.base_url = base_url.rstrip("/")
-        self.name = name
-        self.password = password
-        self.timeout = timeout
-        self.session = requests.Session()
+    def __init__(self, base_url: str, name: str, password: str, timeout: int = 10) -> None:
+        """
+        Inicializa la instancia con la URL base, credenciales y timeout.
+        Se establece la sesión HTTP y se configuran las cabeceras.
+        """
+        self.base_url: str = base_url.rstrip("/")
+        self.name: str = name
+        self.password: str = password
+        self.timeout: int = timeout
+        self.session: requests.Session = requests.Session()
+        # Cabecera inicial para indicar contenido JSON
         self.session.headers.update({"Content-Type": "application/json"})
         self._set_auth_header()
         
-    def _set_auth_header(self):
+    def _set_auth_header(self) -> None:
         """
-        Configura la cabecera Authorization usando Basic Auth con name:password.
+        Configura la cabecera 'Authorization' utilizando Basic Authentication.
+        Codifica 'name:password' en base64 y actualiza la cabecera de la sesión.
         """
-        credentials = f"{self.name}:{self.password}"
-        encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
+        credentials: str = f"{self.name}:{self.password}"
+        encoded_credentials: str = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
         self.session.headers.update({
             "Authorization": f"Basic {encoded_credentials}",
             "Accept": "application/json"
         })
     
-    def get_rewrite_list(self) -> list:
+    def get_rewrite_list(self) -> List[Dict[str, Any]]:
         """
-        Consulta el endpoint /control/rewrite/list para obtener la configuración de rewrite.
-        Se espera que la respuesta contenga una lista de reglas.
+        Consulta el endpoint /control/rewrite/list para obtener la lista de reglas.
+        Se espera que la respuesta sea una lista de diccionarios.
         """
-        url = f"{self.base_url}/control/rewrite/list"
+        url: str = f"{self.base_url}/control/rewrite/list"
         try:
-            response = self.session.get(url, timeout=self.timeout)
+            response: requests.Response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
-            data = response.json()
+            data: Any = response.json()
+            # Dependiendo de la versión, la lista puede venir en la clave "list" o "rewrite".
             if isinstance(data, dict):
                 return data.get("list", data.get("rewrite", []))
             return data
@@ -43,15 +64,15 @@ class AdGuardAPI:
             print(f"Error obteniendo la lista de rewrite: {e}")
             sys.exit(1)
             
-    def add_rewrite(self, domain: str, ip: str) -> dict:
+    def add_rewrite(self, domain: str, ip: str) -> Dict[str, Any]:
         """
-        Añade una entrada de rewrite enviando un POST al endpoint /control/rewrite/add.
-        Se asume que si la respuesta es vacía pero devuelve 200, la operación fue exitosa.
+        Agrega una nueva regla de rewrite mediante POST a /control/rewrite/add.
+        Si la respuesta es 200 pero sin contenido, se asume éxito.
         """
-        url = f"{self.base_url}/control/rewrite/add"
-        payload = {"domain": domain, "answer": ip}
+        url: str = f"{self.base_url}/control/rewrite/add"
+        payload: Dict[str, str] = {"domain": domain, "answer": ip}
         try:
-            response = self.session.post(url, json=payload, timeout=self.timeout)
+            response: requests.Response = self.session.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
             if response.text.strip():
                 try:
@@ -61,19 +82,19 @@ class AdGuardAPI:
             else:
                 return {"status": response.status_code, "message": "Rewrite added successfully, no content returned."}
         except requests.exceptions.HTTPError as http_err:
-            print(f"HTTP Error: {http_err} (Status Code: {response.status_code})")
+            print(f"HTTP Error en add_rewrite: {http_err} (Status Code: {response.status_code})")
             print(f"Respuesta del servidor: {response.text}")
         except Exception as e:
-            print(f"Error inesperado: {e}")
+            print(f"Error inesperado en add_rewrite: {e}")
         sys.exit(1)
     
-    def delete_rewrite(self, domain: str = None, ip: str = None) -> dict:
+    def delete_rewrite(self, domain: Optional[str] = None, ip: Optional[str] = None) -> Dict[str, Any]:
         """
-        Elimina una entrada de rewrite enviando un POST al endpoint /control/rewrite/delete.
-        Se busca primero en la lista una regla que coincida con el domain o ip indicado.
+        Elimina una regla de rewrite mediante POST a /control/rewrite/delete.
+        Primero se busca la entrada que coincida con el 'domain' o 'ip' proporcionado.
         """
-        current_rewrites = self.get_rewrite_list()
-        found_entry = None
+        current_rewrites: List[Dict[str, Any]] = self.get_rewrite_list()
+        found_entry: Optional[Dict[str, Any]] = None
         for entry in current_rewrites:
             if domain and entry.get("domain") == domain:
                 found_entry = entry
@@ -86,13 +107,13 @@ class AdGuardAPI:
             print("No se encontró ninguna entrada que coincida con los criterios dados.")
             sys.exit(0)
         
-        url = f"{self.base_url}/control/rewrite/delete"
-        payload = {
+        url: str = f"{self.base_url}/control/rewrite/delete"
+        payload: Dict[str, str] = {
             "domain": found_entry.get("domain"),
             "answer": found_entry.get("answer")
         }
         try:
-            response = self.session.post(url, json=payload, timeout=self.timeout)
+            response: requests.Response = self.session.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
             if response.text.strip():
                 try:
@@ -102,41 +123,35 @@ class AdGuardAPI:
             else:
                 return {"status": response.status_code, "message": "Rewrite deleted successfully, no content returned."}
         except requests.exceptions.HTTPError as http_err:
-            print(f"HTTP Error: {http_err} (Status Code: {response.status_code})")
+            print(f"HTTP Error en delete_rewrite: {http_err} (Status Code: {response.status_code})")
             print(f"Respuesta del servidor: {response.text}")
         except Exception as e:
-            print(f"Error inesperado: {e}")
+            print(f"Error inesperado en delete_rewrite: {e}")
         sys.exit(1)
     
-    def update_rewrite(self, target_domain: str, target_ip: str, update_domain: str, update_ip: str) -> dict:
+    def update_rewrite(self, target_domain: str, target_ip: str, update_domain: str, update_ip: str) -> Dict[str, Any]:
         """
-        Actualiza una regla de rewrite enviando un PUT al endpoint /control/rewrite/update.
-        El payload tiene la forma:
+        Actualiza una regla de rewrite mediante PUT a /control/rewrite/update.
+        El payload enviado tiene la siguiente estructura:
         
-        {
-          "target": {
-            "domain": target_domain,
-            "answer": target_ip
-          },
-          "update": {
-            "domain": update_domain,
-            "answer": update_ip
-          }
-        }
-        """
-        url = f"{self.base_url}/control/rewrite/update"
-        payload = {
-            "target": {
+            {
+              "target": {
                 "domain": target_domain,
                 "answer": target_ip
-            },
-            "update": {
+              },
+              "update": {
                 "domain": update_domain,
                 "answer": update_ip
+              }
             }
+        """
+        url: str = f"{self.base_url}/control/rewrite/update"
+        payload: Dict[str, Dict[str, str]] = {
+            "target": {"domain": target_domain, "answer": target_ip},
+            "update": {"domain": update_domain, "answer": update_ip}
         }
         try:
-            response = self.session.put(url, json=payload, timeout=self.timeout)
+            response: requests.Response = self.session.put(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
             if response.text.strip():
                 try:
@@ -146,13 +161,13 @@ class AdGuardAPI:
             else:
                 return {"status": response.status_code, "message": "Rewrite updated successfully, no content returned."}
         except requests.exceptions.HTTPError as http_err:
-            print(f"HTTP Error: {http_err} (Status Code: {response.status_code})")
+            print(f"HTTP Error en update_rewrite: {http_err} (Status Code: {response.status_code})")
             print(f"Respuesta del servidor: {response.text}")
         except Exception as e:
-            print(f"Error inesperado: {e}")
+            print(f"Error inesperado en update_rewrite: {e}")
         sys.exit(1)
 
-def load_config(filename: str) -> dict:
+def load_config(filename: str) -> Dict[str, Any]:
     """
     Carga la configuración desde un fichero JSON.
     """
@@ -163,62 +178,67 @@ def load_config(filename: str) -> dict:
         print(f"Error loading configuration file ({filename}): {e}")
         sys.exit(1)
 
-def main():
+def main() -> None:
+    # Configuración de argumentos del script
     parser = argparse.ArgumentParser(
         description="Script para administrar reglas de rewrite en AdGuard Home vía REST API"
     )
     parser.add_argument("--config", default="config.json", help="Ruta al fichero de configuración (default: config.json)")
     
+    # Subcomandos
     subparsers = parser.add_subparsers(dest="command", help="Comando a ejecutar")
     
-    # Subcomando list: lista la configuración de rewrite
+    # Listado de reglas
     subparsers.add_parser("list", help="Listar la configuración de rewrite (/control/rewrite/list)")
     
-    # Subcomando add: añade una entrada de rewrite
+    # Agregar una regla
     parser_add = subparsers.add_parser("add", help="Añadir una entrada de rewrite (/control/rewrite/add)")
     parser_add.add_argument("--domain", required=True, help="Dominio para la regla de rewrite")
     parser_add.add_argument("--ip", required=True, help="IP asociada al dominio")
     
-    # Subcomando del: elimina una entrada de rewrite
+    # Eliminar una regla
     parser_del = subparsers.add_parser("del", help="Eliminar una entrada de rewrite (/control/rewrite/delete)")
     group = parser_del.add_mutually_exclusive_group(required=True)
     group.add_argument("--domain", help="Dominio de la entrada a eliminar")
     group.add_argument("--ip", help="IP de la entrada a eliminar")
     
-    # Subcomando update: actualiza una entrada de rewrite
+    # Actualizar una regla
     parser_update = subparsers.add_parser("update", help="Actualizar una entrada de rewrite (/control/rewrite/update)")
     parser_update.add_argument("--target-domain", required=True, help="Dominio de la regla existente a actualizar")
     parser_update.add_argument("--target-ip", required=True, help="IP de la regla existente a actualizar")
     parser_update.add_argument("--update-domain", required=True, help="Nuevo dominio para la regla")
     parser_update.add_argument("--update-ip", required=True, help="Nueva IP para la regla")
     
-    # Si no se pasan parámetros, muestra la ayuda y sale.
+    # Si no se pasan parámetros, mostrar ayuda
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
         
     args = parser.parse_args()
     
+    # Cargar la configuración desde el archivo JSON
     config = load_config(args.config)
-    adguard_url = config.get("adguard_url", "http://127.0.0.1:3000")
-    name = config.get("name", "admin")
-    password = config.get("password", "")
-    timeout = config.get("timeout", 10)
+    adguard_url: str = config.get("adguard_url", "http://127.0.0.1:3000")
+    name: str = config.get("name", "admin")
+    password: str = config.get("password", "")
+    timeout: int = config.get("timeout", 10)
     
     if not password:
         print("Error: El fichero de configuración debe incluir el campo 'password'.")
         sys.exit(1)
     
+    # Crear instancia de la API
     api = AdGuardAPI(adguard_url, name, password, timeout)
     
+    # Ejecución de subcomandos
     if args.command == "list":
         rewrite_config = api.get_rewrite_list()
         print("Configuración de rewrite:")
         print(json.dumps(rewrite_config, indent=2))
     elif args.command == "add":
-        # Se busca si ya existe una entrada con el mismo dominio.
+        # Si el dominio ya existe, actualizar la entrada en lugar de dar error.
         current_rewrites = api.get_rewrite_list()
-        found_entry = None
+        found_entry: Optional[Dict[str, Any]] = None
         for entry in current_rewrites:
             if entry.get("domain") == args.domain:
                 found_entry = entry
