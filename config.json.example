@@ -1,0 +1,6 @@
+{
+  "adguard_url": "http://127.0.0.1:3000",
+  "name": "admin",
+  "password": "TU_PASSWORD_AQUI",
+  "timeout": 10
+}
