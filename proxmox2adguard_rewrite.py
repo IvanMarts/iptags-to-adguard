@@ -135,15 +135,19 @@ class AdGuardAPI:
 def is_valid_ip(ip: str) -> bool:
     """
     Comprueba si la IP es válida y se encuentra en alguno de los CIDRs permitidos.
-    Usa la variable global ALLOWED_CIDRS.
+    Usa la variable global ALLOWED_CIDRS, que debe ser una lista de objetos ipaddress.IPv4Network.
     """
     try:
         ip_obj = ipaddress.ip_address(ip)
         for net in ALLOWED_CIDRS:
+            print(f"DEBUG: Verificando si {ip_obj} está en {net}")
             if ip_obj in net:
+                print(f"DEBUG: {ip_obj} se encuentra en {net}")
                 return True
+        print(f"DEBUG: {ip_obj} no se encontró en ningún CIDR permitido.")
         return False
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: Error en is_valid_ip al procesar '{ip}': {e}")
         return False
 
 def sanitize_hostname(host: str) -> str:
@@ -158,21 +162,29 @@ def extract_valid_ip(tags: str) -> str:
     Busca un patrón similar a "ip=xxx.xxx.xxx.xxx" (aceptando espacios en blanco alrededor del '=').
     Si se encuentra y la IP está dentro de los CIDRs permitidos, la retorna; de lo contrario, retorna una cadena vacía.
     """
-    print(f"{tags}")
-    """
-    Utiliza una expresión regular que capture el patrón ip= con posibles espacios.
-    Por ejemplo: "ip=192.168.1.101" o "ip = 192.168.1.101"
-    """
+    print(f"DEBUG: Procesando tags: '{tags}'")
+    
+    # Buscar el patrón "ip" en la cadena (aceptando espacios en blanco)
     match = re.search(r"ip\s*=\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", tags)
     if match:
         candidate = match.group(1)
+        print(f"DEBUG: Se encontró candidate IP: '{candidate}'")
         try:
-            # Verifica que candidate sea una IP válida y que pertenezca a alguno de los CIDRs permitidos.
-            ipaddress.ip_address(candidate)
+            # Intentar convertir la candidate a un objeto IP
+            ip_obj = ipaddress.ip_address(candidate)
+            print(f"DEBUG: {candidate} convertido a objeto IP: {ip_obj}")
+            # Verificar si la IP es válida según los CIDRs permitidos
             if is_valid_ip(candidate):
+                print(f"DEBUG: La IP '{candidate}' es válida y está dentro de los CIDRs permitidos.")
                 return candidate
-        except ValueError:
-            pass
+            else:
+                print(f"DEBUG: La IP '{candidate}' NO está dentro de los CIDRs permitidos.")
+        except ValueError as e:
+            print(f"DEBUG: Error al convertir '{candidate}' en IP: {e}")
+    else:
+        print("DEBUG: No se encontró el patrón 'ip=' en los tags.")
+    
+    print("DEBUG: Retornando cadena vacía.")
     return ""
 
 # -----------------------------
