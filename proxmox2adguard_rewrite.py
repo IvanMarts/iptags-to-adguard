@@ -8,15 +8,17 @@ Se ejecuta en el host de Proxmox (donde están disponibles los comandos qm y pct
 La configuración de AdGuard se carga desde un fichero JSON (por defecto config.json) con este formato:
 {
   "adguard_url": "http://192.168.1.1:83",
-  "name": "keteflips",
-  "password": "Ketewapo.69kete",
+  "name": "your_username",
+  "password": "your_password",
   "timeout": 10,
   "allowed_cidrs": [
     "192.168.0.0/16",
     "100.64.0.0/10",
     "10.0.0.0/8"
-  ]
+  ],
+  "network_domain": "dominio"
 }
+Si network_domain es "dominio", un host llamado "vm01" se actualizará como "vm01.dominio".
 """
 
 import subprocess
@@ -27,13 +29,13 @@ import sys
 import argparse
 from typing import List, Dict, Any, Optional
 
-# Global variable para almacenar los CIDRs permitidos, que se leerán desde la configuración.
+# Global variable para los CIDRs permitidos (se configurarán desde el fichero de configuración).
 ALLOWED_CIDRS: List[ipaddress.IPv4Network] = []
 
 # -----------------------------
 # Clase para interactuar con la API de AdGuard Home (Rewrite)
 # -----------------------------
-import requests, base64  # Importamos requests y base64 para la autenticación.
+import requests, base64
 
 class AdGuardAPI:
     def __init__(self, base_url: str, name: str, password: str, timeout: int = 10) -> None:
@@ -46,7 +48,7 @@ class AdGuardAPI:
         self.password: str = password
         self.timeout: int = timeout
         self.session = requests.Session()
-        # Se indica que se envía JSON
+        # Indica que se envía JSON
         self.session.headers.update({"Content-Type": "application/json"})
         self._set_auth_header()
         
@@ -129,25 +131,63 @@ class AdGuardAPI:
             print(f"Error en update_rewrite: {e}")
             sys.exit(1)
 
+    def delete_rewrite(self, domain: Optional[str] = None, ip: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Elimina una regla de rewrite mediante POST a /control/rewrite/delete.
+        Primero busca en la lista una regla que coincida con el domain o ip indicado.
+        """
+        current_rewrites: List[Dict[str, Any]] = self.get_rewrite_list()
+        found_entry: Optional[Dict[str, Any]] = None
+        for entry in current_rewrites:
+            if domain and entry.get("domain") == domain:
+                found_entry = entry
+                break
+            if ip and entry.get("answer") == ip:
+                found_entry = entry
+                break
+        
+        if not found_entry:
+            print("No se encontró ninguna entrada que coincida con los criterios dados.")
+            sys.exit(0)
+        
+        url: str = f"{self.base_url}/control/rewrite/delete"
+        payload: Dict[str, str] = {
+            "domain": found_entry.get("domain"),
+            "answer": found_entry.get("answer")
+        }
+        try:
+            response = self.session.post(url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            if response.text.strip():
+                try:
+                    return response.json()
+                except ValueError:
+                    return {"status": response.status_code, "message": response.text.strip()}
+            else:
+                return {"status": response.status_code, "message": "Rewrite deleted successfully, no content returned."}
+        except Exception as e:
+            print(f"Error en delete_rewrite: {e}")
+            sys.exit(1)
+
 # -----------------------------
 # Funciones auxiliares para procesar IPs y hostnames
 # -----------------------------
 def is_valid_ip(ip: str) -> bool:
     """
     Comprueba si la IP es válida y se encuentra en alguno de los CIDRs permitidos.
-    Usa la variable global ALLOWED_CIDRS, que debe ser una lista de objetos ipaddress.IPv4Network.
+    Usa la variable global ALLOWED_CIDRS.
     """
     try:
         ip_obj = ipaddress.ip_address(ip)
         for net in ALLOWED_CIDRS:
-            print(f"DEBUG: Verificando si {ip_obj} está en {net}")
+            # # DEBUG: print(f"DEBUG: Verificando si {ip_obj} está en {net}")
             if ip_obj in net:
-                print(f"DEBUG: {ip_obj} se encuentra en {net}")
+                # # DEBUG: print(f"DEBUG: {ip_obj} se encuentra en {net}")
                 return True
-        print(f"DEBUG: {ip_obj} no se encontró en ningún CIDR permitido.")
+        # # DEBUG: print(f"DEBUG: {ip_obj} no se encontró en ningún CIDR permitido.")
         return False
     except Exception as e:
-        print(f"DEBUG: Error en is_valid_ip al procesar '{ip}': {e}")
+        # # DEBUG: print(f"DEBUG: Error en is_valid_ip al procesar '{ip}': {e}")
         return False
 
 def sanitize_hostname(host: str) -> str:
@@ -159,29 +199,23 @@ def sanitize_hostname(host: str) -> str:
 def extract_valid_ip(tags: str) -> str:
     """
     Extrae la primera dirección IP encontrada en la cadena de tags.
-    No requiere el prefijo "ip="; simplemente busca cualquier patrón que se parezca a una IPv4.
-    Verifica que la IP sea válida y se encuentre en alguno de los CIDRs permitidos.
-    Retorna la IP encontrada o una cadena vacía si no se halla ninguna IP válida.
+    Busca cualquier secuencia que se parezca a una IPv4 y la valida.
     """
-    print(f"DEBUG: Procesando tags: '{tags}'")
-    
-    # Buscar todas las coincidencias que se asemejen a una IPv4 (cuatro grupos de 1 a 3 dígitos separados por puntos)
+    # # DEBUG: print(f"DEBUG: Procesando tags: '{tags}'")
     candidates = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', tags)
-    print(f"DEBUG: Candidatos encontrados: {candidates}")
-    
+    # # DEBUG: print(f"DEBUG: Candidatos encontrados: {candidates}")
     for candidate in candidates:
-        print(f"DEBUG: Procesando candidato: '{candidate}'")
+        # # DEBUG: print(f"DEBUG: Procesando candidato: '{candidate}'")
         try:
             ip_obj = ipaddress.ip_address(candidate)
-            print(f"DEBUG: '{candidate}' es una IP válida: {ip_obj}")
+            # # DEBUG: print(f"DEBUG: '{candidate}' es una IP válida: {ip_obj}")
             if is_valid_ip(candidate):
-                print(f"DEBUG: La IP '{candidate}' es válida y está dentro de los CIDRs permitidos.")
+                # # DEBUG: print(f"DEBUG: La IP '{candidate}' es válida y está dentro de los CIDRs permitidos.")
                 return candidate
-            else:
-                print(f"DEBUG: La IP '{candidate}' no está dentro de los CIDRs permitidos.")
         except ValueError as e:
-            print(f"DEBUG: Error al convertir '{candidate}' en IP: {e}")
-    print("DEBUG: No se encontró ninguna IP válida en los tags.")
+            # # DEBUG: print(f"DEBUG: Error al convertir '{candidate}' en IP: {e}")
+            continue
+    # # DEBUG: print("DEBUG: No se encontró ninguna IP válida en los tags.")
     return ""
 
 # -----------------------------
@@ -266,7 +300,7 @@ def main() -> None:
                         help="Ruta al fichero de configuración de AdGuard (default: config.json)")
     args = parser.parse_args()
 
-    # Cargar la configuración de AdGuard
+    # Cargar la configuración de AdGuard desde el fichero externo.
     try:
         with open(args.config, "r") as f:
             ag_config = json.load(f)
@@ -278,12 +312,12 @@ def main() -> None:
     ag_name: str = ag_config.get("name", "admin")
     ag_password: str = ag_config.get("password", "")
     timeout: int = ag_config.get("timeout", 10)
+    network_domain: str = ag_config.get("network_domain", "")
     if not ag_password:
         print("Error: El fichero de configuración debe incluir 'password'.")
         sys.exit(1)
 
     # Configurar ALLOWED_CIDRS desde el fichero de configuración.
-    # Se espera una lista de CIDRs en formato string, si no se proporciona se usan valores por defecto.
     cidr_list = ag_config.get("allowed_cidrs", ["192.168.0.0/16", "100.64.0.0/10", "10.0.0.0/8"])
     global ALLOWED_CIDRS
     try:
@@ -292,21 +326,23 @@ def main() -> None:
         print(f"Error procesando 'allowed_cidrs' en la configuración: {e}")
         sys.exit(1)
 
-    # Crear instancia de la API de AdGuard
+    # Crear instancia de la API de AdGuard.
     api = AdGuardAPI(adguard_url, ag_name, ag_password, timeout)
 
-    # Procesar VMs (QEMU)
+    # Procesar VMs (QEMU).
     print("Procesando VMs (QEMU)...")
     vmids: List[str] = get_running_vmids()
     for vmid in vmids:
         config_lines: List[str] = get_vm_config(vmid)
         vmname: str = extract_value_from_config(config_lines, "name:")
         vmname = sanitize_hostname(vmname)
+        # Agregar el dominio de red si está definido y no está presente
+        if network_domain and not vmname.endswith("." + network_domain):
+            vmname = f"{vmname}.{network_domain}"
         tags: str = extract_value_from_config(config_lines, "tags:")
         tag_ip: str = extract_valid_ip(tags)
         if vmname and tag_ip:
             print(f"VM {vmid}: {vmname} -> {tag_ip}")
-            # Consultar si ya existe la entrada en AdGuard rewrite
             current_rewrites: List[Dict[str, Any]] = api.get_rewrite_list()
             found_entry: Optional[Dict[str, Any]] = None
             for entry in current_rewrites:
@@ -328,13 +364,15 @@ def main() -> None:
         else:
             print(f"No se encontró tag válido para la VM {vmid}")
 
-    # Procesar contenedores (LXC)
+    # Procesar contenedores (LXC).
     print("Procesando contenedores (LXC)...")
     lxcids: List[str] = get_running_lxc_ids()
     for lxcid in lxcids:
         config_lines = get_lxc_config(lxcid)
         hostname: str = extract_value_from_config(config_lines, "hostname:")
         hostname = sanitize_hostname(hostname)
+        if network_domain and not hostname.endswith("." + network_domain):
+            hostname = f"{hostname}.{network_domain}"
         tags: str = extract_value_from_config(config_lines, "tags:")
         tag_ip: str = extract_valid_ip(tags)
         if hostname and tag_ip:
