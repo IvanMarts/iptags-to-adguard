@@ -158,33 +158,30 @@ def sanitize_hostname(host: str) -> str:
 
 def extract_valid_ip(tags: str) -> str:
     """
-    Extrae la primera IP válida de una cadena de tags.
-    Busca un patrón similar a "ip=xxx.xxx.xxx.xxx" (aceptando espacios en blanco alrededor del '=').
-    Si se encuentra y la IP está dentro de los CIDRs permitidos, la retorna; de lo contrario, retorna una cadena vacía.
+    Extrae la primera dirección IP encontrada en la cadena de tags.
+    No requiere el prefijo "ip="; simplemente busca cualquier patrón que se parezca a una IPv4.
+    Verifica que la IP sea válida y se encuentre en alguno de los CIDRs permitidos.
+    Retorna la IP encontrada o una cadena vacía si no se halla ninguna IP válida.
     """
     print(f"DEBUG: Procesando tags: '{tags}'")
     
-    # Buscar el patrón "ip" en la cadena (aceptando espacios en blanco)
-    match = re.search(r"ip\s*=\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", tags)
-    if match:
-        candidate = match.group(1)
-        print(f"DEBUG: Se encontró candidate IP: '{candidate}'")
+    # Buscar todas las coincidencias que se asemejen a una IPv4 (cuatro grupos de 1 a 3 dígitos separados por puntos)
+    candidates = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', tags)
+    print(f"DEBUG: Candidatos encontrados: {candidates}")
+    
+    for candidate in candidates:
+        print(f"DEBUG: Procesando candidato: '{candidate}'")
         try:
-            # Intentar convertir la candidate a un objeto IP
             ip_obj = ipaddress.ip_address(candidate)
-            print(f"DEBUG: {candidate} convertido a objeto IP: {ip_obj}")
-            # Verificar si la IP es válida según los CIDRs permitidos
+            print(f"DEBUG: '{candidate}' es una IP válida: {ip_obj}")
             if is_valid_ip(candidate):
                 print(f"DEBUG: La IP '{candidate}' es válida y está dentro de los CIDRs permitidos.")
                 return candidate
             else:
-                print(f"DEBUG: La IP '{candidate}' NO está dentro de los CIDRs permitidos.")
+                print(f"DEBUG: La IP '{candidate}' no está dentro de los CIDRs permitidos.")
         except ValueError as e:
             print(f"DEBUG: Error al convertir '{candidate}' en IP: {e}")
-    else:
-        print("DEBUG: No se encontró el patrón 'ip=' en los tags.")
-    
-    print("DEBUG: Retornando cadena vacía.")
+    print("DEBUG: No se encontró ninguna IP válida en los tags.")
     return ""
 
 # -----------------------------
