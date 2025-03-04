@@ -155,21 +155,24 @@ def sanitize_hostname(host: str) -> str:
 def extract_valid_ip(tags: str) -> str:
     """
     Extrae la primera IP válida de una cadena de tags.
-    Busca tokens que comiencen con "ip=" y retorna la primera IP que cumpla la validación.
+    Busca un patrón similar a "ip=xxx.xxx.xxx.xxx" (aceptando espacios en blanco alrededor del '=').
+    Si se encuentra y la IP está dentro de los CIDRs permitidos, la retorna; de lo contrario, retorna una cadena vacía.
     """
-
     print(f"{tags}")
-    tokens = tags.split(";")
-    for token in tokens:
-        token = token.strip()
-        if token.startswith("ip="):
-            candidate = token[len("ip="):].strip()
-            try:
-                ipaddress.ip_address(candidate)
-                if is_valid_ip(candidate):
-                    return candidate
-            except ValueError:
-                continue
+    """
+    Utiliza una expresión regular que capture el patrón ip= con posibles espacios.
+    Por ejemplo: "ip=192.168.1.101" o "ip = 192.168.1.101"
+    """
+    match = re.search(r"ip\s*=\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", tags)
+    if match:
+        candidate = match.group(1)
+        try:
+            # Verifica que candidate sea una IP válida y que pertenezca a alguno de los CIDRs permitidos.
+            ipaddress.ip_address(candidate)
+            if is_valid_ip(candidate):
+                return candidate
+        except ValueError:
+            pass
     return ""
 
 # -----------------------------
