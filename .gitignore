@@ -2,3 +2,4 @@ config.json
 iptoad
 test*
 *.log
+.gitignore
